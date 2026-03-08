@@ -81,7 +81,8 @@ reg.register("search", "Search the web", lambda query: {"result": "..."}, {"quer
 ```
 
 ---
-
+# New version v0.2
+Add vision and thinking =) 
 ## Presets
 
 | Preset | dim | layers | heads | kv_heads | ~Params |

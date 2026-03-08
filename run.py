@@ -1,217 +1,222 @@
 #!/usr/bin/env python3
 """
-pico-model interactive test runner
-Usage:
+run.py  –  Interactive inference & benchmarking (v2)
+
+Commands:
   python run.py llm   --ckpt checkpoints/llm/ckpt_final.pt --tok checkpoints/llm/tokenizer.json
+  python run.py vlm   --ckpt checkpoints/vlm/ckpt_vlm_final.pt --tok ... --image photo.jpg
   python run.py img   --ckpt checkpoints/vae/ckpt_vae_final.pt --out samples/
-  python run.py tools --ckpt checkpoints/llm/ckpt_final.pt --tok checkpoints/llm/tokenizer.json
+  python run.py tools --ckpt checkpoints/llm/ckpt_final.pt --tok ...
+  python run.py bench --ckpt checkpoints/llm/ckpt_final.pt --tok ...
 """
-import os
-import sys
-import json
-import argparse
+import os, sys, json, argparse
 import torch
 
-from pico.arch import PicoConfig, PicoLLM, PicoVAE
+from pico.arch      import PicoConfig, PicoLLM, PicoVLM, PicoVAE
 from pico.tokenizer import CharTokenizer
-from pico.tools import default_tools, ToolRegistry
+from pico.tools     import default_tools
+from pico.trainer   import detect_device
 
 
-def load_device():
-    if torch.cuda.is_available():
-        return "cuda"
-    if torch.backends.mps.is_available():
-        return "mps"
-    return "cpu"
+def load_llm(path, device):
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    cfg  = PicoConfig(**ckpt["config"]); m = PicoLLM(cfg)
+    m.load_state_dict(ckpt["model"]); return m.to(device).eval(), cfg
+
+def load_vlm(path, device):
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    cfg  = PicoConfig(**ckpt["config"]); m = PicoVLM(cfg)
+    m.load_state_dict(ckpt["model"]); return m.to(device).eval(), cfg
+
+def load_vae(path, device):
+    ckpt = torch.load(path, map_location=device, weights_only=False)
+    cfg  = PicoConfig(**ckpt["config"]); m = PicoVAE(cfg)
+    m.load_state_dict(ckpt["model"]); return m.to(device).eval(), cfg
+
+def load_tok(path): return CharTokenizer.load(path)
 
 
-def load_llm(ckpt_path: str, device: str):
-    ckpt = torch.load(ckpt_path, map_location=device)
-    cfg = PicoConfig(**ckpt["config"])
-    model = PicoLLM(cfg)
-    model.load_state_dict(ckpt["model"])
-    model.to(device).eval()
-    return model, cfg
-
-
-def load_tok(tok_path: str) -> CharTokenizer:
-    return CharTokenizer.load(tok_path)
-
-
-def load_vae(ckpt_path: str, device: str):
-    ckpt = torch.load(ckpt_path, map_location=device)
-    cfg = PicoConfig(**ckpt["config"])
-    model = PicoVAE(cfg)
-    model.load_state_dict(ckpt["model"])
-    model.to(device).eval()
-    return model, cfg
-
-
+# ── LLM ──
 def run_llm(args):
-    device = load_device()
-    print(f"Loading LLM from {args.ckpt} on {device}")
+    device = detect_device()
     model, cfg = load_llm(args.ckpt, device)
     tok = load_tok(args.tok)
 
-    params = model.num_params / 1e6
-    print(f"Model: {params:.2f}M params | vocab={cfg.vocab_size} | dim={cfg.dim} | layers={cfg.n_layers}")
-    print("Type your prompt. Empty line to quit.\n")
+    # Detect if this checkpoint was trained with chat format
+    # (has <|user|> and <|assistant|> in vocab)
+    is_chat = (tok._ch2id.get("<|user|>") is not None
+               and tok._ch2id.get("<|assistant|>") is not None)
+
+    print(f"PicoLLM {model.num_params/1e6:.2f}M | dim={cfg.dim} | layers={cfg.n_layers}")
+    print(f"Mode: {'chat' if is_chat else 'text'} | thinking: {cfg.use_thinking}")
+    print("Type prompt, empty to quit.\n")
 
     while True:
-        try:
-            prompt = input(">>> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            break
-        if not prompt:
-            break
+        try: prompt = input(">>> ").strip()
+        except (EOFError, KeyboardInterrupt): break
+        if not prompt: break
 
-        ids = tok.encode(prompt, bos=True, eos=False)
+        # Wrap in chat format so model knows to enter assistant mode
+        if is_chat:
+            formatted = f"<|user|>{prompt}<|assistant|>"
+        else:
+            formatted = prompt
+
+        ids    = tok.encode(formatted, bos=True, eos=False)
         tokens = torch.tensor([ids], dtype=torch.long, device=device)
+        out    = model.generate(tokens, max_new_tokens=args.max_tokens,
+                                temperature=args.temp, top_p=args.top_p,
+                                stop_ids=[tok.EOS])
+        generated = out[0, len(ids):].tolist()
 
-        output = model.generate(
-            tokens,
-            max_new_tokens=args.max_tokens,
-            temperature=args.temp,
-            top_p=args.top_p,
-            stop_ids=[tok.EOS],
-        )
-        generated = output[0, len(ids):].tolist()
-        print(tok.decode(generated))
+        if cfg.use_thinking and hasattr(tok, "decode_with_thinking"):
+            answer, thinking = tok.decode_with_thinking(generated)
+            if args.show_thinking and thinking:
+                print(f"[Thinking] {thinking}")
+            print(answer)
+        else:
+            print(tok.decode(generated))
         print()
 
 
-def run_img(args):
-    device = load_device()
-    print(f"Loading VAE from {args.ckpt} on {device}")
-    model, cfg = load_vae(args.ckpt, device)
+# ── VLM ──
+def run_vlm(args):
+    device = detect_device()
+    model, cfg = load_vlm(args.ckpt, device)
+    tok = load_tok(args.tok)
+    print(f"PicoVLM {model.num_params/1e6:.2f}M | image support ✓")
 
+    image_tensor = None
+    if args.image and os.path.exists(args.image):
+        try:
+            from PIL import Image
+            import torchvision.transforms as T
+            img = Image.open(args.image).convert("RGB")
+            tfm = T.Compose([T.Resize((cfg.img_size, cfg.img_size)), T.ToTensor(),
+                              T.Normalize([0.5,0.5,0.5],[0.5,0.5,0.5])])
+            image_tensor = tfm(img).unsqueeze(0).to(device)
+            print(f"  Image loaded: {args.image}")
+        except Exception as e:
+            print(f"  Image load failed: {e}")
+
+    print("Type prompt, empty to quit.\n")
+    while True:
+        try: prompt = input(">>> ").strip()
+        except (EOFError, KeyboardInterrupt): break
+        if not prompt: break
+        ids    = tok.encode(f"<|user|>{prompt}<|assistant|>", bos=True, eos=False)
+        tokens = torch.tensor([ids], dtype=torch.long, device=device)
+        out    = model.generate(tokens, images=image_tensor,
+                                max_new_tokens=args.max_tokens,
+                                temperature=args.temp, top_p=args.top_p,
+                                stop_ids=[tok.EOS])
+        print(tok.decode(out[0, len(ids):].tolist()))
+        print()
+
+
+# ── VAE image generation ──
+def run_img(args):
+    device = detect_device()
+    model, cfg = load_vae(args.ckpt, device)
     os.makedirs(args.out, exist_ok=True)
     try:
-        from PIL import Image
-        import torchvision.transforms.functional as TF
+        from PIL import Image; import torchvision.transforms.functional as TF
     except ImportError:
-        print("pip install Pillow torchvision")
-        sys.exit(1)
+        print("pip install Pillow torchvision"); sys.exit(1)
 
     for i in range(args.n):
-        img_tensor = model.sample(1, device=device)[0]
-        img = TF.to_pil_image(img_tensor.cpu().clamp(0, 1))
-        path = os.path.join(args.out, f"sample_{i:04d}.png")
-        img.save(path)
-        print(f"Saved {path}")
+        img_t = model.sample(1, device=device)[0]
+        TF.to_pil_image(img_t.cpu().clamp(0,1)).save(
+            os.path.join(args.out, f"sample_{i:04d}.png"))
+        print(f"  saved sample_{i:04d}.png")
 
     if args.reconstruct and os.path.isfile(args.reconstruct):
-        from PIL import Image
-        import torchvision.transforms as T
-        src = Image.open(args.reconstruct).convert("RGB")
-        tfm = T.Compose([T.Resize((cfg.img_size, cfg.img_size)), T.ToTensor()])
-        x = tfm(src).unsqueeze(0).to(device)
-        with torch.no_grad():
-            recon, _, _, _ = model(x)
-        out_img = TF.to_pil_image(recon[0].cpu().clamp(0, 1))
-        out_img.save(os.path.join(args.out, "reconstruction.png"))
-        print("Saved reconstruction.png")
+        from PIL import Image; import torchvision.transforms as T
+        img = Image.open(args.reconstruct).convert("RGB")
+        tfm = T.Compose([T.Resize((cfg.img_size,cfg.img_size)), T.ToTensor()])
+        x   = tfm(img).unsqueeze(0).to(device)
+        with torch.no_grad(): recon, _, _, _ = model(x)
+        TF.to_pil_image(recon[0].cpu().clamp(0,1)).save(
+            os.path.join(args.out, "reconstruction.png"))
+        print("  saved reconstruction.png")
 
 
+# ── Tool use ──
 def run_tools(args):
-    device = load_device()
-    print(f"Loading LLM from {args.ckpt} on {device}")
+    device = detect_device()
     model, cfg = load_llm(args.ckpt, device)
     tok = load_tok(args.tok)
-
     reg = default_tools()
 
-    def model_fn(prompt: str, device=device) -> str:
+    def model_fn(prompt, device=device):
         ids = tok.encode(prompt, bos=True, eos=False)
-        tokens = torch.tensor([ids], dtype=torch.long, device=device)
-        output = model.generate(tokens, max_new_tokens=256, temperature=0.7, top_p=0.9, stop_ids=[tok.EOS])
-        generated = output[0, len(ids):].tolist()
-        return tok.decode(generated)
+        t   = torch.tensor([ids], dtype=torch.long, device=device)
+        out = model.generate(t, max_new_tokens=256, temperature=0.7, stop_ids=[tok.EOS])
+        return tok.decode(out[0, len(ids):].tolist())
 
-    print("Tool-augmented mode. Available tools:", [t["name"] for t in reg.schema()])
-    print("Type your query. Empty to quit.\n")
-
+    print("Tool-augmented mode:", [t["name"] for t in reg.schema()])
     while True:
-        try:
-            query = input(">>> ").strip()
-        except (EOFError, KeyboardInterrupt):
-            break
-        if not query:
-            break
-        result = reg.run_agent_loop(model_fn, tok, query, device=device)
-        print(result)
-        print()
+        try: q = input(">>> ").strip()
+        except (EOFError, KeyboardInterrupt): break
+        if not q: break
+        print(reg.run_agent_loop(model_fn, tok, q, device=device)); print()
 
 
+# ── Benchmark ──
 def run_benchmark(args):
-    device = load_device()
+    import time
+    device = detect_device()
     model, cfg = load_llm(args.ckpt, device)
-
     params = model.num_params / 1e6
-    mem_mb = sum(p.numel() * p.element_size() for p in model.parameters()) / 1e6
-
-    print(f"{'='*40}")
-    print(f"  pico-model benchmark")
-    print(f"{'='*40}")
-    print(f"  Parameters : {params:.2f}M")
+    mem_mb = sum(p.numel()*p.element_size() for p in model.parameters()) / 1e6
+    print(f"{'='*48}")
+    print(f"  pico-model benchmark  (v2)")
+    print(f"{'='*48}")
+    print(f"  Params     : {params:.2f}M")
     print(f"  Weight RAM : {mem_mb:.1f} MB")
-    print(f"  dim={cfg.dim} | layers={cfg.n_layers} | heads={cfg.n_heads} | kv_heads={cfg.n_kv_heads}")
-    print(f"  vocab={cfg.vocab_size} | max_seq={cfg.max_seq_len}")
-
+    print(f"  dim={cfg.dim} layers={cfg.n_layers} heads={cfg.n_heads} kv={cfg.n_kv_heads}")
+    print(f"  vocab={cfg.vocab_size} max_seq={cfg.max_seq_len}")
+    print(f"  Device: {device}")
     if args.tok:
-        import time
-        tok = load_tok(args.tok)
-        prompt = "Hello, I am a tiny language model"
-        ids = tok.encode(prompt, bos=True, eos=False)
-        tokens = torch.tensor([ids], dtype=torch.long, device=device)
+        tok   = load_tok(args.tok)
+        ids   = tok.encode("Hello, I am a small language model.", bos=True, eos=False)
+        toks  = torch.tensor([ids], dtype=torch.long, device=device)
+        # warmup
+        with torch.no_grad(): _ = model.generate(toks, max_new_tokens=10)
         t0 = time.time()
-        with torch.no_grad():
-            out = model.generate(tokens, max_new_tokens=50, temperature=1.0)
+        with torch.no_grad(): out = model.generate(toks, max_new_tokens=100)
         elapsed = time.time() - t0
-        n_new = out.shape[1] - tokens.shape[1]
-        print(f"  Throughput : {n_new/elapsed:.1f} tok/s ({device})")
-    print(f"{'='*40}")
+        n = out.shape[1] - toks.shape[1]
+        print(f"  Throughput : {n/elapsed:.1f} tok/s")
+    print(f"{'='*48}")
 
+
+# ─────────────────────────── Main ───────────────────────────
 
 def main():
     p = argparse.ArgumentParser()
     sub = p.add_subparsers(dest="cmd")
 
-    lm = sub.add_parser("llm", help="Interactive LLM chat")
-    lm.add_argument("--ckpt", required=True)
-    lm.add_argument("--tok", required=True)
-    lm.add_argument("--max-tokens", type=int, default=200)
-    lm.add_argument("--temp", type=float, default=0.8)
-    lm.add_argument("--top-p", type=float, default=0.9)
+    lm = sub.add_parser("llm");   lm.add_argument("--ckpt",required=True); lm.add_argument("--tok",required=True)
+    lm.add_argument("--max-tokens",type=int,default=200); lm.add_argument("--temp",type=float,default=0.8)
+    lm.add_argument("--top-p",type=float,default=0.9); lm.add_argument("--show-thinking",action="store_true")
 
-    im = sub.add_parser("img", help="Generate / reconstruct images")
-    im.add_argument("--ckpt", required=True)
-    im.add_argument("--out", default="samples")
-    im.add_argument("-n", type=int, default=4)
-    im.add_argument("--reconstruct", default="", help="path to image to reconstruct")
+    vm = sub.add_parser("vlm");   vm.add_argument("--ckpt",required=True); vm.add_argument("--tok",required=True)
+    vm.add_argument("--image",default=""); vm.add_argument("--max-tokens",type=int,default=200)
+    vm.add_argument("--temp",type=float,default=0.8); vm.add_argument("--top-p",type=float,default=0.9)
 
-    tl = sub.add_parser("tools", help="LLM with tool use")
-    tl.add_argument("--ckpt", required=True)
-    tl.add_argument("--tok", required=True)
-    tl.add_argument("--max-tokens", type=int, default=256)
+    im = sub.add_parser("img");   im.add_argument("--ckpt",required=True); im.add_argument("--out",default="samples")
+    im.add_argument("-n",type=int,default=4); im.add_argument("--reconstruct",default="")
 
-    bm = sub.add_parser("bench", help="Benchmark model size + speed")
-    bm.add_argument("--ckpt", required=True)
-    bm.add_argument("--tok", default="")
+    tl = sub.add_parser("tools"); tl.add_argument("--ckpt",required=True); tl.add_argument("--tok",required=True)
+
+    bm = sub.add_parser("bench"); bm.add_argument("--ckpt",required=True); bm.add_argument("--tok",default="")
 
     args = p.parse_args()
-
-    if args.cmd == "llm":
-        run_llm(args)
-    elif args.cmd == "img":
-        run_img(args)
-    elif args.cmd == "tools":
-        run_tools(args)
-    elif args.cmd == "bench":
-        run_benchmark(args)
-    else:
-        p.print_help()
-
+    dispatch = {"llm":run_llm,"vlm":run_vlm,"img":run_img,"tools":run_tools,"bench":run_benchmark}
+    fn = dispatch.get(args.cmd)
+    if fn: fn(args)
+    else:  p.print_help()
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,13 @@
-torch>=2.1.0
+# Core
+torch>=2.2.0
+torchvision>=0.17.0
 Pillow>=9.0.0
-torchvision>=0.16.0
 sentencepiece>=0.1.99
+
+# Optional accelerators (install what matches your hardware)
+# Google TPU:
+#   pip install torch_xla
+# Intel GPU / NPU:
+#   pip install intel-extension-for-pytorch
+# AMD / Qualcomm (Windows):
+#   pip install torch-directml

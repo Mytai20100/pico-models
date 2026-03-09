@@ -13,7 +13,7 @@ from typing import List, Optional
 import torch
 from torch.utils.data import Dataset, DataLoader
 
-# ── DataLoader best settings ──
+# DataLoader best settings 
 
 def _optimal_workers(requested: int = 0) -> int:
     cpu = os.cpu_count() or 4
@@ -36,7 +36,7 @@ def _make_loader(ds, batch_size, shuffle, collate_fn=None, num_workers=0,
     )
 
 
-# ─────────────────── Text / LLM Datasets ───────────────────
+# Text / LLM Datasets 
 
 class TextDataset(Dataset):
     def __init__(self, tokens: List[int], seq_len: int):
@@ -119,7 +119,7 @@ class ThinkingDataset(Dataset):
                 torch.tensor(m[:-1], dtype=torch.long))   # thinking mask aligned to input
 
 
-# ─────────────────── Vision Datasets ───────────────────
+# Vision Datasets 
 
 class ImageFolderFlat(Dataset):
     """Images only (for VAE training)."""
@@ -208,10 +208,9 @@ class VisionChatDataset(Dataset):
         return img_tensor, x, y, tm
 
 
-# ─────────────────── Collation ───────────────────
-
+#  Collation 
 def collate_pad(batch, pad_id: int = 0):
-    """Handles (x, y) or (x, y, mask) batches with variable lengths."""
+    
     has_mask = len(batch[0]) == 3
     if has_mask:
         xs, ys, ms = zip(*batch)
@@ -237,7 +236,7 @@ def collate_vlm(batch, pad_id: int = 0):
     return torch.stack(imgs), pad(xs, pad_id), pad(ys, -1), pad(ms, 0)
 
 
-# ─────────────────── DataLoader factories ───────────────────
+# DataLoader factories 
 
 def make_text_loader(tokens, seq_len, batch_size, shuffle=True):
     return _make_loader(TextDataset(tokens, seq_len), batch_size, shuffle,
@@ -265,7 +264,7 @@ def make_vlm_loader(jsonl_path, tokenizer, seq_len, img_size, batch_size, shuffl
                         collate_fn=lambda b: collate_vlm(b))
 
 
-# ─────────────────── File helpers ───────────────────
+# File helpers 
 
 def load_jsonl(path: str) -> List[dict]:
     items = []

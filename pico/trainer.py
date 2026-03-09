@@ -30,7 +30,7 @@ from torch.amp import GradScaler, autocast
 from pico.arch import PicoConfig, PicoLLM, PicoVLM, PicoVAE
 
 
-# ──────────────────────────── Device helpers ────────────────────────────
+# Device helpers 
 
 def detect_device(requested: str = "") -> str:
     if requested:
@@ -164,7 +164,7 @@ def enable_gradient_checkpointing(model: nn.Module):
     print(f"  Gradient checkpointing enabled on {len(layers)} layers ✓")
 
 
-# ──────────────────────────── Config ────────────────────────────
+# Config 
 
 @dataclass
 class TrainConfig:
@@ -194,7 +194,7 @@ def get_lr(step, cfg, total_steps):
     return cfg.min_lr + (cfg.lr - cfg.min_lr) * 0.5 * (1 + math.cos(math.pi * p))
 
 
-# ──────────────────────────── Checkpoint ────────────────────────────
+#  Checkpoint 
 
 def save_checkpoint(model, optimizer, step, loss, out_dir, tag="latest"):
     os.makedirs(out_dir, exist_ok=True)
@@ -214,7 +214,7 @@ def load_checkpoint(path, model_cls, device="cpu"):
     return m.to(device), ckpt.get("step", 0)
 
 
-# ──────────────────────────── Trainer ────────────────────────────
+# Trainer 
 
 class Trainer:
     def __init__(self, model: nn.Module, train_cfg: TrainConfig, device: str = "cpu"):
@@ -275,7 +275,7 @@ class Trainer:
                        else None)
         self.step = 0; self._tokens_seen = 0; self._t0 = time.time()
 
-    # ── internals ──
+    #  internals
 
     def _set_lr(self, total):
         lr = get_lr(self.step, self.cfg, total)
@@ -321,9 +321,9 @@ class Trainer:
               f"{tps:,.0f} tok/s | {elapsed:.1f}s{self._vram_str()}")
         self._tokens_seen = 0; self._t0 = time.time()
 
-    # ────────────────────────────────────────────────────────────
+     
     #  train_llm
-    # ────────────────────────────────────────────────────────────
+     
     def train_llm(self, loader_fn: Callable, total_steps: Optional[int] = None):
         steps = total_steps or self.cfg.max_steps
         loader = loader_fn(); it = iter(loader)
@@ -363,9 +363,9 @@ class Trainer:
         save_checkpoint(self.model, self.opt, self.step, acc_loss, self.cfg.out_dir, "final")
         print("LLM training complete ✓")
 
-    # ────────────────────────────────────────────────────────────
+     
     #  train_vae
-    # ────────────────────────────────────────────────────────────
+     
     def train_vae(self, loader_fn: Callable, total_steps: Optional[int] = None):
         steps = total_steps or self.cfg.max_steps
         loader = loader_fn(); it = iter(loader)
@@ -404,9 +404,8 @@ class Trainer:
                         self.cfg.out_dir, "vae_final")
         print("VAE training complete ✓")
 
-    # ────────────────────────────────────────────────────────────
+     
     #  train_vlm
-    # ────────────────────────────────────────────────────────────
     def train_vlm(self, loader_fn: Callable, total_steps: Optional[int] = None):
         steps = total_steps or self.cfg.max_steps
         loader = loader_fn(); it = iter(loader)

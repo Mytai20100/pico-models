@@ -1,7 +1,5 @@
 #!/usr/bin/env python3
 """
-run.py  –  Interactive inference & benchmarking (v2)
-
 Commands:
   python run.py llm   --ckpt checkpoints/llm/ckpt_final.pt --tok checkpoints/llm/tokenizer.json
   python run.py vlm   --ckpt checkpoints/vlm/ckpt_vlm_final.pt --tok ... --image photo.jpg
@@ -36,7 +34,7 @@ def load_vae(path, device):
 def load_tok(path): return CharTokenizer.load(path)
 
 
-# ── LLM ──
+# LLM 
 def run_llm(args):
     device = detect_device()
     model, cfg = load_llm(args.ckpt, device)
@@ -79,7 +77,7 @@ def run_llm(args):
         print()
 
 
-# ── VLM ──
+# VLM 
 def run_vlm(args):
     device = detect_device()
     model, cfg = load_vlm(args.ckpt, device)
@@ -114,7 +112,7 @@ def run_vlm(args):
         print()
 
 
-# ── VAE image generation ──
+# VAE image generation
 def run_img(args):
     device = detect_device()
     model, cfg = load_vae(args.ckpt, device)
@@ -141,7 +139,7 @@ def run_img(args):
         print("  saved reconstruction.png")
 
 
-# ── Tool use ──
+# Tool use
 def run_tools(args):
     device = detect_device()
     model, cfg = load_llm(args.ckpt, device)
@@ -162,7 +160,7 @@ def run_tools(args):
         print(reg.run_agent_loop(model_fn, tok, q, device=device)); print()
 
 
-# ── Benchmark ──
+# Benchmark 
 def run_benchmark(args):
     import time
     device = detect_device()
@@ -191,7 +189,7 @@ def run_benchmark(args):
     print(f"{'='*48}")
 
 
-# ─────────────────────────── Main ───────────────────────────
+# Main 
 
 def main():
     p = argparse.ArgumentParser()

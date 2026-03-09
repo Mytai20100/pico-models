@@ -122,7 +122,7 @@ class CharTokenizer:
     def __len__(self): return len(self._ch2id)
 
 
-# ── SentencePiece wrapper (optional) ──
+# SentencePiece wrapper (optional) 
 
 try:
     import sentencepiece as spm

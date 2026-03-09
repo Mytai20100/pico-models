@@ -1,11 +1,3 @@
-"""
-pico/arch.py  –  Pico Model Architecture (v2)
-New in v2:
-  • PicoVLM   – Vision-Language model (ViT encoder + LLM decoder)
-  • Thinking  – <think> / </think> chain-of-thought token support
-  • Optimised GQA with flash-attention 2 path
-  • NPU/TPU compile-friendly
-"""
 from __future__ import annotations
 
 import math
@@ -16,7 +8,7 @@ from dataclasses import dataclass
 from typing import Optional, Tuple, List
 
 
-# ─────────────────────────── Config ───────────────────────────
+# Config
 
 @dataclass
 class PicoConfig:
@@ -45,7 +37,7 @@ class PicoConfig:
     model_type:     str   = "llm"   # "llm" | "vlm" | "vae"
 
 
-# ─────────────────────────── RoPE ───────────────────────────
+# RoPE 
 
 def precompute_freqs_cis(dim: int, end: int, theta: float = 10000.0) -> torch.Tensor:
     freqs = 1.0 / (theta ** (torch.arange(0, dim, 2).float() / dim))
@@ -61,7 +53,7 @@ def apply_rotary_emb(xq, xk, freqs_cis):
             torch.view_as_real(xk_ * fc).flatten(3).type_as(xk))
 
 
-# ─────────────────────────── Primitives ───────────────────────────
+# Primitives 
 
 class RMSNorm(nn.Module):
     def __init__(self, dim, eps=1e-6):
@@ -134,11 +126,10 @@ def _init_weights(m):
         nn.init.normal_(m.weight, std=0.02)
 
 
-# ─────────────────────────── PicoLLM ───────────────────────────
+# PicoLLM 
 
 class PicoLLM(nn.Module):
-    """Text-only causal LM with optional <think> chain-of-thought."""
-
+   
     def __init__(self, cfg: PicoConfig):
         super().__init__()
         self.cfg = cfg
@@ -198,7 +189,7 @@ class PicoLLM(nn.Module):
         return tokens
 
 
-# ─────────────────────────── Vision Encoder ───────────────────────────
+# Vision Encoder
 
 class PatchEmbed(nn.Module):
     def __init__(self, img_size, patch_size, in_ch, embed_dim):
@@ -208,7 +199,6 @@ class PatchEmbed(nn.Module):
     def forward(self, x): return self.proj(x).flatten(2).transpose(1, 2)
 
 class VisionEncoder(nn.Module):
-    """ViT-style encoder that outputs visual tokens compatible with LLM dim."""
 
     def __init__(self, cfg: PicoConfig):
         super().__init__()
@@ -232,14 +222,8 @@ class VisionEncoder(nn.Module):
         return self.proj(self.norm(self.blocks(x)))
 
 
-# ─────────────────────────── PicoVLM ───────────────────────────
-
+# PicoVLM
 class PicoVLM(nn.Module):
-    """
-    Vision-Language Model.
-    Prepends visual tokens from VisionEncoder before text tokens.
-    Supports image captioning, visual QA, and thinking traces.
-    """
 
     def __init__(self, cfg: PicoConfig):
         super().__init__()
@@ -325,7 +309,7 @@ class PicoVLM(nn.Module):
         return tokens
 
 
-# ─────────────────────────── PicoVAE ───────────────────────────
+# PicoVAE
 
 class PicoVAE(nn.Module):
     def __init__(self, cfg: PicoConfig):

@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-train.py  –  Pico Model Training CLI (v2.1)
-
-Optimised for NVIDIA T4 (15 GB) — but auto-adapts to any GPU.
-"""
 import os, sys, json, argparse
 import torch
 
@@ -41,7 +36,7 @@ def parse_args():
     p = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     sub = p.add_subparsers(dest="cmd")
 
-    # ── train-llm ──
+    # train-llm
     t = sub.add_parser("train-llm", help="Train text LLM")
     t.add_argument("--data",      required=True)
     t.add_argument("--tokenizer", default="char", choices=["char","sp"])
@@ -50,7 +45,7 @@ def parse_args():
     t.add_argument("--thinking",  action="store_true")
     _add_common(t)
 
-    # ── train-vlm ──
+    # train-vlm
     v = sub.add_parser("train-vlm", help="Train Vision-Language Model")
     v.add_argument("--data",      required=True,
                    help="JSONL: {image, prompt, response[, thinking]}")
@@ -62,7 +57,7 @@ def parse_args():
     v.add_argument("--thinking",  action="store_true")
     _add_common(v)
 
-    # ── train-img (VAE) ──
+    # train-img (VAE)
     i = sub.add_parser("train-img", help="Train image VAE")
     i.add_argument("--data",       required=True, help="Folder of images")
     i.add_argument("--img-size",   type=int,   default=128)
@@ -71,9 +66,6 @@ def parse_args():
     _add_common(i)
 
     return p.parse_args()
-
-
-# ─────────────────────────────────────────────────────────────
 
 def _make_tcfg(args, out_dir, device) -> TrainConfig:
     return TrainConfig(
